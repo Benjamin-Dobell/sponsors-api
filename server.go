@@ -56,8 +56,8 @@ type Sponsor struct {
 
 // Tier model
 type Tier struct {
-	// Name of the tier
-	Name string
+	// Description of the tier
+	Description string
 }
 
 // Server manager.
@@ -229,8 +229,8 @@ func (s *Server) getSponsors(ctx context.Context) (map[string][]Sponsor, error) 
 
 		for _, edge := range q.Viewer.SponsorshipsAsMaintainer.Edges {
 			sponsor := edge.Node.Sponsor
-			tier := edge.Node.Tier.Name
-			log.Printf("tier: %s", tier)
+			tier := strings.TrimSpace(strings.SplitN(edge.Node.Tier.Description, "\n", 2)[0])
+
 			sponsors[tier] = append(sponsors[tier], sponsor)
 			sponsors[allTier] = append(sponsors[allTier], sponsor)
 		}
