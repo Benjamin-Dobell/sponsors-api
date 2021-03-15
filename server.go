@@ -143,6 +143,7 @@ func (s *Server) serveAvatar(tier string, w http.ResponseWriter, r *http.Request
 
 	// check index bounds
 	if n > len(cache)-1 {
+		w.Header().Set("Cache-Control", "max-age=60")
 		w.Header().Set("Content-Type", "image/png")
 		io.Copy(w, bytes.NewReader(pixel))
 		return
@@ -151,6 +152,7 @@ func (s *Server) serveAvatar(tier string, w http.ResponseWriter, r *http.Request
 	// redirect to avatar
 	sponsor := cache[n]
 	w.Header().Set("Location", sponsor.AvatarURL)
+	w.Header().Set("Cache-Control", "max-age=60")
 	w.WriteHeader(http.StatusTemporaryRedirect)
 	fmt.Fprintf(w, "Redirecting to %s", sponsor.AvatarURL)
 }
