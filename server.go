@@ -22,6 +22,8 @@ import (
 	"github.com/tj/go/env"
 )
 
+const allTier = "__all"
+
 // pixel is a png used for missing avatars.
 var pixel []byte
 
@@ -52,6 +54,12 @@ type Sponsor struct {
 	AvatarURL string
 }
 
+// Tier model
+type Tier struct {
+	// Name of the tier
+	Name string
+}
+
 // Server manager.
 type Server struct {
 	// URL is the url of the server.
@@ -60,13 +68,15 @@ type Server struct {
 	// Client is the github client.
 	Client *githubv4.Client
 
+	// Cache of sponsors (indexed by sponsor tier)
+	Cache          map[string][]Sponsor
+
 	// CacheTTL is the duration until the cache expires.
 	CacheTTL time.Duration
 
 	// cache
 	mu             sync.Mutex
 	cacheTimestamp time.Time
-	cache          []Sponsor
 }
 
 // ServeHTTP implementation.
@@ -89,14 +99,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tier := allTier
+
+	if strings.HasPrefix(path, "/tier/") {
+		tier = strings.SplitN(path, "/", 4)[2]
+		path = path[len(tier)+6:]
+	}
+
 	// routing
 	switch {
 	case strings.HasPrefix(path, "/sponsor/markdown"):
 		s.serveMarkdown(w, r)
-	case strings.HasPrefix(path, "/sponsor/avatar"):
-		s.serveAvatar(w, r)
-	case strings.HasPrefix(path, "/sponsor/profile"):
-		s.serveProfile(w, r)
+	case strings.HasPrefix(path, "/sponsor/avatar/"):
+		s.serveAvatar(tier, w, r)
+	case strings.HasPrefix(path, "/sponsor/profile/"):
+		s.serveProfile(tier, w, r)
 	default:
 		http.Error(w, "Not Found", http.StatusNotImplemented)
 	}
@@ -112,9 +129,11 @@ func (s *Server) serveMarkdown(w http.ResponseWriter, r *http.Request) {
 }
 
 // serveAvatar redirects to a sponsor's avatar image.
-func (s *Server) serveAvatar(w http.ResponseWriter, r *http.Request) {
+func (s *Server) serveAvatar(tier string, w http.ResponseWriter, r *http.Request) {
+	cache := s.Cache[tier]
+
 	// /sponsor/avatar/{index}
-	index := strings.Replace(r.URL.Path, "/sponsor/avatar/", "", 1)
+	index := strings.Split(r.URL.Path, "/sponsor/avatar/")[1]
 	n, err := strconv.Atoi(index)
 	if err != nil {
 		log.Printf("error parsing index: %s", err)
@@ -123,23 +142,25 @@ func (s *Server) serveAvatar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// check index bounds
-	if n > len(s.cache)-1 {
+	if n > len(cache)-1 {
 		w.Header().Set("Content-Type", "image/png")
 		io.Copy(w, bytes.NewReader(pixel))
 		return
 	}
 
 	// redirect to avatar
-	sponsor := s.cache[n]
+	sponsor := cache[n]
 	w.Header().Set("Location", sponsor.AvatarURL)
 	w.WriteHeader(http.StatusTemporaryRedirect)
 	fmt.Fprintf(w, "Redirecting to %s", sponsor.AvatarURL)
 }
 
 // serveProfile redirects to a sponsor's profile.
-func (s *Server) serveProfile(w http.ResponseWriter, r *http.Request) {
+func (s *Server) serveProfile(tier string, w http.ResponseWriter, r *http.Request) {
+	cache := s.Cache[tier]
+
 	// /sponsor/profile/{index}
-	index := strings.Replace(r.URL.Path, "/sponsor/profile/", "", 1)
+	index := strings.Split(r.URL.Path, "/sponsor/profile/")[1]
 	n, err := strconv.Atoi(index)
 	if err != nil {
 		log.Printf("error parsing index: %s", err)
@@ -150,9 +171,9 @@ func (s *Server) serveProfile(w http.ResponseWriter, r *http.Request) {
 	url := sponsorUrl
 
 	// check index bounds
-	if n <= len(s.cache)-1 {
+	if n <= len(cache)-1 {
 		// redirect to profile
-		sponsor := s.cache[n]
+		sponsor := cache[n]
 		url = fmt.Sprintf("https://github.com/%s", sponsor.Login)
 	}
 
@@ -183,16 +204,17 @@ func (s *Server) primeCache(ctx context.Context) error {
 		return err
 	}
 
-	s.cache = sponsors
+	s.Cache = sponsors
 	s.cacheTimestamp = time.Now()
 	return nil
 }
 
 // getSponsors implementation.
-func (s *Server) getSponsors(ctx context.Context) ([]Sponsor, error) {
-	var sponsors []Sponsor
+func (s *Server) getSponsors(ctx context.Context) (map[string][]Sponsor, error) {
 	var q sponsorships
 	var cursor string
+
+	sponsors := make(map[string][]Sponsor)
 
 	for {
 		err := s.Client.Query(ctx, &q, map[string]interface{}{
@@ -205,7 +227,10 @@ func (s *Server) getSponsors(ctx context.Context) ([]Sponsor, error) {
 
 		for _, edge := range q.Viewer.SponsorshipsAsMaintainer.Edges {
 			sponsor := edge.Node.Sponsor
-			sponsors = append(sponsors, sponsor)
+			tier := edge.Node.Tier.Name
+			log.Printf("tier: %s", tier)
+			sponsors[tier] = append(sponsors[tier], sponsor)
+			sponsors[allTier] = append(sponsors[allTier], sponsor)
 		}
 
 		if !q.Viewer.SponsorshipsAsMaintainer.PageInfo.HasNextPage {
@@ -231,6 +256,7 @@ type sponsorships struct {
 			Edges []struct {
 				Node struct {
 					Sponsor Sponsor
+					Tier Tier
 				}
 				Cursor string
 			}

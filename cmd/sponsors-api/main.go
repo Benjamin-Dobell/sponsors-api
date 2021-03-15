@@ -32,6 +32,7 @@ func main() {
 
 	s := &sponsors.Server{
 		URL:      env.GetDefault("URL", "http://localhost:3000"),
+		Cache:    make(map[string][]sponsors.Sponsor),
 		CacheTTL: ttl,
 		Client:   client,
 	}
