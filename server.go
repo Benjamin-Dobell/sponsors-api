@@ -18,10 +18,14 @@ import (
 	"time"
 
 	"github.com/shurcooL/githubv4"
+
+	"github.com/tj/go/env"
 )
 
 // pixel is a png used for missing avatars.
 var pixel []byte
+
+var sponsorUrl string
 
 // initialize gray pixel for missing avatar responses.
 func init() {
@@ -32,6 +36,8 @@ func init() {
 	draw.Draw(img, r, &image.Uniform{c}, image.ZP, draw.Src)
 	png.Encode(&buf, img)
 	pixel = buf.Bytes()
+
+	sponsorUrl = env.GetDefault("SPONSOR_URL", "")
 }
 
 // Sponsor model.
@@ -141,15 +147,20 @@ func (s *Server) serveProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	url := sponsorUrl
+
 	// check index bounds
-	if n > len(s.cache)-1 {
+	if n <= len(s.cache)-1 {
+		// redirect to profile
+		sponsor := s.cache[n]
+		url = fmt.Sprintf("https://github.com/%s", sponsor.Login)
+	}
+
+	if url == "" {
 		http.Error(w, "Not found", http.StatusNotFound)
 		return
 	}
 
-	// redirect to profile
-	sponsor := s.cache[n]
-	url := fmt.Sprintf("https://github.com/%s", sponsor.Login)
 	w.Header().Set("Location", url)
 	w.WriteHeader(http.StatusTemporaryRedirect)
 	fmt.Fprintf(w, "Redirecting to %s", url)
